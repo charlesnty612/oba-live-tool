@@ -1,0 +1,6 @@
+# pnpm 11 用 allowBuilds 显式放行依赖的构建脚本。
+# 不放行的话 Electron 的 postinstall 不会执行，二进制和 esbuild 都装不上。
+allowBuilds:
+  electron: true
+  electron-winstaller: true
+  esbuild: true

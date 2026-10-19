@@ -1,0 +1,47 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+dist-electron
+release
+*.local
+
+# Editor directories and files
+.vscode/.debug.env
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# lockfile —— 只忽略 npm/yarn，pnpm 的要提交：
+# 本项目在 pnpm 11 下不加锁文件会解析出不同的依赖树（electron-builder 的 git 传递依赖
+# 需要 --config.blockExoticSubdeps=false），有锁文件才能保证别人装出一模一样的版本
+package-lock.json
+yarn.lock
+/test-results/
+/playwright-report/
+/playwright/.cache/
+
+cookies
+release/
+icon-candidates/
+.eslintcache
+
+TROUBLE.md
+.env
+
+coverage/
+
+.trae
+.claude

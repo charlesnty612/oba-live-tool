@@ -1,0 +1,279 @@
+import os from 'node:os'
+import path from 'node:path'
+import process from 'node:process'
+import { fileURLToPath } from 'node:url'
+import type { MenuItemConstructorOptions } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron'
+import { IPC_CHANNELS } from 'shared/ipcChannels'
+import { emitter } from './event/eventBus'
+import { updateManager } from './managers/UpdateManager'
+import { providerService } from './services/ProviderService'
+import windowManager from './windowManager'
+import './ipc'
+import { createLogger } from './logger'
+import { accountManager } from './managers/AccountManager'
+
+// const _require = createRequire(import.meta.url)
+
+// The built directory structure
+//
+// ├─┬ dist-electron
+// │ ├─┬ main
+// │ │ └── index.js    > Electron-Main
+// │ └─┬ preload
+// │   └── index.mjs   > Preload-Scripts
+// ├─┬ dist
+// │ └── index.html    > Electron-Renderer
+//
+
+function createBoxedString(lines: string[]) {
+  // 1. 计算最长的一行文字长度
+  const maxLength = Math.max(...lines.map(line => line.length))
+
+  // 2. 定义边框样式
+  // 顶部和底部边框 (例如: +----------------+)
+  const horizontalLine = `+${'-'.repeat(maxLength + 2)}+`
+
+  // 3. 生成中间的内容行
+  const content = lines
+    .map(line => {
+      // 使用 padEnd 补齐空格，使得右边框对齐
+      return `| ${line.padEnd(maxLength)} |`
+    })
+    .join('\n')
+
+  // 4. 拼接结果
+  return `\n${horizontalLine}\n${content}\n${horizontalLine}`
+}
+
+function logStartupInfo() {
+  const appInfo = [
+    `App Name:     ${app.getName()}`,
+    `App Version:  ${app.getVersion()}`,
+    `Electron Ver: ${process.versions.electron}`,
+    `Node Ver:     ${process.versions.node}`,
+    `Platform:     ${process.platform} (${process.arch})`,
+    `Environment:  ${app.isPackaged ? 'Production' : 'Development'}`,
+  ]
+  const logger = createLogger('startup')
+  logger.debug(createBoxedString(appInfo))
+}
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+
+process.env.APP_ROOT = path.join(__dirname, '../..')
+
+export const MAIN_DIST = path.join(process.env.APP_ROOT, 'dist-electron')
+export const RENDERER_DIST = path.join(process.env.APP_ROOT, 'dist')
+export const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL
+
+process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL
+  ? path.join(process.env.APP_ROOT, 'public')
+  : RENDERER_DIST
+
+app.commandLine.appendSwitch('remote-debugging-port', '9222')
+
+// Disable GPU Acceleration for Windows 7
+if (os.release().startsWith('6.1')) app.disableHardwareAcceleration()
+
+// Set application name for Windows 10+ notifications
+if (process.platform === 'win32') app.setAppUserModelId(app.getName())
+
+if (!app.requestSingleInstanceLock()) {
+  app.quit()
+  process.exit(0)
+}
+
+let win: BrowserWindow | null = null
+const preload = path.join(__dirname, '../preload/index.mjs')
+const indexHtml = path.join(RENDERER_DIST, 'index.html')
+
+async function createWindow() {
+  win = new BrowserWindow({
+    title: `阿米巴直播助手 - v${app.getVersion()}`,
+    width: 1280,
+    height: 800,
+    autoHideMenuBar: app.isPackaged,
+    icon: path.join(process.env.VITE_PUBLIC, 'favicon.ico'),
+    webPreferences: {
+      preload,
+      // Warning: Enable nodeIntegration and disable contextIsolation is not secure in production
+      // nodeIntegration: true,
+      nodeIntegration: process.env.NODE_ENV === 'development',
+      // Consider using contextBridge.exposeInMainWorld
+      // Read more on https://www.electronjs.org/docs/latest/tutorial/context-isolation
+      // contextIsolation: false,
+    },
+  })
+
+  windowManager.setMainWindow(win)
+
+  if (VITE_DEV_SERVER_URL) {
+    // #298
+    win.loadURL(VITE_DEV_SERVER_URL)
+    // Open devTool if the app is not packaged
+    win.webContents.openDevTools()
+  } else {
+    win.loadFile(indexHtml)
+  }
+
+  // 加载完成后检查更新
+  win.webContents.on('did-finish-load', async () => {
+    await updateManager.silentCheckForUpdate()
+  })
+
+  // Make all links open with the browser, not with the application
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('https:')) shell.openExternal(url)
+    return { action: 'deny' }
+  })
+
+  // 当返回最新 providers 时推送到渲染进程
+  emitter.on('providers-updated', providers => {
+    win?.webContents.send(IPC_CHANNELS.app.providersUpdated, providers)
+  })
+}
+
+/**
+ * Electron 默认菜单是内置的英文模板（File/Edit/View/Window/Help），
+ * 不受 electronLanguages 影响，必须自己 build 一份才能显示中文。
+ * 打包后菜单栏虽然被 autoHideMenuBar 隐藏，但按 Alt 仍会调出，所以还是得翻译。
+ */
+function buildApplicationMenu() {
+  const template: MenuItemConstructorOptions[] = [
+    {
+      label: '文件',
+      submenu: [{ role: 'quit', label: '退出' }],
+    },
+    {
+      label: '编辑',
+      submenu: [
+        { role: 'undo', label: '撤销' },
+        { role: 'redo', label: '重做' },
+        { type: 'separator' },
+        { role: 'cut', label: '剪切' },
+        { role: 'copy', label: '复制' },
+        { role: 'paste', label: '粘贴' },
+        { role: 'selectAll', label: '全选' },
+      ],
+    },
+    {
+      label: '视图',
+      submenu: [
+        { role: 'reload', label: '重新加载' },
+        { type: 'separator' },
+        { role: 'resetZoom', label: '实际大小' },
+        { role: 'zoomIn', label: '放大' },
+        { role: 'zoomOut', label: '缩小' },
+        { type: 'separator' },
+        {
+          label: '开发者工具',
+          accelerator: 'CmdOrCtrl+Shift+I',
+          click: () => win?.webContents.toggleDevTools(),
+        },
+        { type: 'separator' },
+        { role: 'togglefullscreen', label: '全屏' },
+      ],
+    },
+    {
+      label: '窗口',
+      submenu: [
+        { role: 'minimize', label: '最小化' },
+        { role: 'close', label: '关闭' },
+      ],
+    },
+    {
+      label: '帮助',
+      submenu: [
+        {
+          label: '关于阿米巴直播助手',
+          click: () => {
+            dialog.showMessageBox({
+              type: 'info',
+              title: '关于',
+              message: `阿米巴直播助手 ${app.getVersion()}`,
+              detail: `Electron ${process.versions.electron}\nChromium ${process.versions.chrome}\nNode.js ${process.versions.node}`,
+            })
+          },
+        },
+      ],
+    },
+  ]
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template))
+}
+
+app
+  .whenReady()
+  .then(logStartupInfo)
+  .then(() => providerService.initialize())
+  .then(buildApplicationMenu)
+  .then(createWindow)
+
+app.on('window-all-closed', async () => {
+  win = null
+  accountManager.cleanup()
+  if (process.platform !== 'darwin') app.quit()
+})
+
+app.on('second-instance', () => {
+  if (win) {
+    // Focus on the main window if the user tried to open another
+    if (win.isMinimized()) win.restore()
+    win.focus()
+  }
+})
+
+app.on('activate', () => {
+  const allWindows = BrowserWindow.getAllWindows()
+  if (allWindows.length) {
+    allWindows[0].focus()
+  } else {
+    createWindow()
+  }
+})
+
+process.on('uncaughtException', error => {
+  const logger = createLogger('uncaughtException')
+  logger.error('--------------意外的未捕获异常---------------')
+  logger.error(error)
+  logger.error('---------------------------------------------')
+
+  dialog.showErrorBox(
+    '应用程序错误',
+    `发生了一个意外的错误，请前往 Github Issue 页面反馈：\n${error.message}`,
+  )
+})
+
+process.on('unhandledRejection', reason => {
+  // playwright-extra 插件问题：在 browser.close() 时概率触发
+  // https://github.com/berstend/puppeteer-extra/issues/858
+  const logger = createLogger('unhandledRejection')
+  if (
+    reason instanceof Error &&
+    reason.message.includes('cdpSession.send: Target page, context or browser has been closed')
+  ) {
+    return logger.verbose(reason)
+  }
+
+  logger.error('--------------未被处理的错误---------------')
+  logger.error(reason)
+  logger.error('-------------------------------------------')
+})
+
+// New window example arg: new windows url
+ipcMain.handle('open-win', (_, arg) => {
+  const childWindow = new BrowserWindow({
+    webPreferences: {
+      preload,
+      nodeIntegration: true,
+      contextIsolation: false,
+    },
+  })
+
+  if (VITE_DEV_SERVER_URL) {
+    childWindow.loadURL(`${VITE_DEV_SERVER_URL}#${arg}`)
+  } else {
+    childWindow.loadFile(indexHtml, { hash: arg })
+  }
+})
