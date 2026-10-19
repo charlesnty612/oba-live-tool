@@ -35,6 +35,7 @@
     "artifactName": "${productName}_${version}_windows_${arch}_portable.${ext}"
   },
   "nsis": {
+    "artifactName": "${productName}_${version}_windows_${arch}.${ext}",
     "oneClick": false,
     "perMachine": false,
     "allowToChangeInstallationDirectory": true,

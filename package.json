@@ -15,7 +15,7 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build && electron-builder --publish never",
+    "build": "tsc && vite build && electron-builder --publish never && node ./scripts/fix-update-manifest.mjs",
     "preview": "vite preview",
     "pretest": "vite build --mode=test",
     "test": "vitest run",

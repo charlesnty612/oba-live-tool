@@ -29,7 +29,9 @@ type LatestYml = {
 const GITHUB_OWNER = 'charlesnty612'
 const GITHUB_REPO = 'oba-live-tool'
 const CDN_URL = 'https://fastly.jsdelivr.net/gh/'
-const PRODUCT_NAME = packageJson.name
+// 产物文件名用的是 electron-builder 的 ${productName}，不是包名 name。
+// 用 name 会拼出 oba-live-tool_1.6.3_windows_x64.exe 这种不存在的文件名。
+const PRODUCT_NAME = packageJson.productName ?? packageJson.name
 
 const logger = createLogger('update')
 
