@@ -3,7 +3,10 @@
     "name": "DeepSeek",
     "baseURL": "https://api.deepseek.com",
     "apiUrl": "https://platform.deepseek.com/api_keys",
-    "models": ["deepseek-flash", "deepseek-v4-pro"]
+    "models": [
+      "deepseek-flash",
+      "deepseek-v4-pro"
+    ]
   },
   "openrouter": {
     "name": "OpenRouter",
